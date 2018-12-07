@@ -185,8 +185,11 @@ class attention_decoder(nn.Module):
     """
     inputs : (N, Ty/r, E/2)
 
-    used BahdanauAttention implementation from https://github.com/AuCson/PyTorch-Batch-Attention-Seq2seq
-    
+    used BahdanauAttention implementation from https://github.com/spro/practical-pytorch/blob/master/seq2seq-translation/seq2seq-translation.ipynb
+    hidden size : num_units (cells)
+    output size : num_units
+    word input : inputs
+    last_hidden : memory
 
     """
     def __init__(self, shape, memory, num_units=None):

@@ -1,20 +1,16 @@
-# -*- coding: utf-8 -*-
-#/usr/bin/python2
-'''
-By kyubyong park. kbpark.linguist@gmail.com. 
-https://www.github.com/kyubyong/expressive_tacotron
-'''
-
-from __future__ import print_function
-
 from hyperparams import Hyperparams as hp
 import numpy as np
-import tensorflow as tf
+
+import torch
+import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader
 from utils import *
-import codecs
 import re
+import codecs
 import os
 import unicodedata
+
+
 
 def load_vocab():
     char2idx = {char: idx for idx, char in enumerate(hp.vocab)}
@@ -22,11 +18,11 @@ def load_vocab():
     return char2idx, idx2char
 
 def text_normalize(text):
-    text = ''.join(char for char in unicodedata.normalize('NFD', text) #unicode normalize 필요
+    text = ''.join(char for char in unicodedata.normalize('NFD', text)
                            if unicodedata.category(char) != 'Mn') # Strip accents
 
-    text = re.sub(u"[^{}]".format(hp.vocab), " ", text)
-    text = re.sub("[ ]+", " ", text) #특수문자는 공백으로 제거
+    text = re.sub("[^{}]".format(hp.vocab), " ", text)
+    text = re.sub("[ ]+", " ", text)
     return text
 
 def load_data(mode="train"):
@@ -36,73 +32,88 @@ def load_data(mode="train"):
     if mode == "train":
         # Parse
         fpaths, texts = [], []
-        transcript = os.path.join(hp.data, 'metadata.csv')  ##음성 스펙토그램
+        transcript = os.path.join(hp.data, 'metadata.csv')
         lines = codecs.open(transcript, 'r', 'utf-8').readlines()
 
         for line in lines:
-            fname, _, text = line.strip().split("|")            #텍스트와 음성 스펙토그램의 경로를 대응
+            fname, _, text = line.strip().split("|")
             fpath = os.path.join(hp.data, "wavs", fname + ".wav")
 
             fpaths.append(fpath)
 
-            text = text_normalize(text) + u"␃"  # ␃: EOS
+            text = text_normalize(text) + "E" # ␃: EOS
             text = [char2idx[char] for char in text]
             texts.append(np.array(text, np.int32).tostring())
         return fpaths, texts
     else:
-        # Parse             train시에는 텍스트만 읽어오면 됨
+        # Parse
         lines = codecs.open(hp.test_data, 'r', 'utf-8').readlines()[1:]
-        sents = [text_normalize(line.split(" ", 1)[-1]).strip() + u"␃" for line in lines]  # text normalization, E: EOS, sent는 sentences
-        texts = np.zeros((len(lines), hp.Tx), np.int32) ##character의 고유 값을 byte값으로 대응
+        sents = [text_normalize(line.split(" ", 1)[-1]).strip() + u"␃" for line in lines]  # text normalization, E: EOS
+        texts = np.zeros((len(lines), hp.Tx), np.int32)
         for i, sent in enumerate(sents):
-            texts[i, :len(sent)] = [char2idx[char] for char in sent] ##len(sent)까지의 영역에 normalize된 sentence 대응
+            texts[i, :len(sent)] = [char2idx[char] for char in sent]
         return texts
 
-def get_batch():
-    """Loads training data and put them in queues"""
-    with tf.device('/cpu:0'):
-        # Load data
-        fpaths, texts = load_data() # list
 
-        # Calc total batch count
-        num_batch = len(fpaths) // hp.batch_size
+class get_Dataset(Dataset):
+    def __init__(self, csv_file, wav_file):
+        
+        self.metadata = pd.read_csv(csv_file, sep='|', header=None)
+        self.wav_file = wav_file
+    
+    def __len__(self):
+        return len(self.metadata)
 
-        fpaths = tf.convert_to_tensor(fpaths)
-        texts = tf.convert_to_tensor(texts)
+    def load_vocab(self):
+        vocab = u'''␀␃ !',-.:;?ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz''' # ␀: Padding ␃: End of Sentence
 
-        # Create Queues
-        fpath, text = tf.train.slice_input_producer([fpaths, texts], shuffle=True)  #배열에서 데이터를 읽어들임
+        char2idx = {char: idx for idx, char in enumerate(vocab)}
+        idx2char = {idx: char for idx, char in enumerate(vocab)}
+        return char2idx, idx2char
 
-        # Text parsing
-        text = tf.decode_raw(text, tf.int32)  # (None,) Reinterpret the bytes of a string as a vector of numbers.
+    def text_normalize(self, text):
+        vocab = u'''␀␃ !',-.:;?ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz''' # ␀: Padding ␃: End of Sentence
 
-        # Padding
-        text = tf.pad(text, ([0, hp.Tx], ))[:hp.Tx] # (Tx,) #텍스트에 1개의 padding 붙임
+        text = ''.join(char for char in unicodedata.normalize('NFD', text)
+                           if unicodedata.category(char) != 'Mn') # Strip accents
 
-        if hp.prepro:
-            def _load_spectrograms(fpath):
-                fname = os.path.basename(fpath)
-                mel = "mels/{}".format(fname.replace("wav", "npy")) ##numpy파일로 바꿔서 mel폴더에 저장 - 별 처리도 안하고 바로 numpy배열로 만드네...
-                mag = "mags/{}".format(fname.replace("wav", "npy"))
-                return fname, np.load(mel), np.load(mag)
+        text = re.sub("[^{}]".format(vocab), " ", text)
+        text = re.sub("[ ]+", " ", text)
+        return text
 
-            fname, mel, mag = tf.py_func(_load_spectrograms, [fpath], [tf.string, tf.float32, tf.float32])
-        else:
-            fname, mel, mag = tf.py_func(load_spectrograms, [fpath], [tf.string, tf.float32, tf.float32])  # (None, n_mels)
+    def load_wav(self, filename):
+        return librosa.load(filename, sr=22050)
 
-        # Add shape information
-        fname.set_shape(())
-        text.set_shape((hp.Tx,))
-        mel.set_shape((None, hp.n_mels*hp.r))   #mel spectogram
-        mag.set_shape((None, hp.n_fft//2+1))    #mag : magnitude (mel과의 차이는?, 같은 wav파일로부터 생기는데...)
+    def __getitem__(self, idx):
+        char2idx, idx2char = self.load_vocab()
+                
+        wav_name = os.path.join(self.wav_file, self.metadata.ix[idx,0]) + '.wav'
+        text = self.metadata.ix[idx, 1]
+        text = self.text_normalize(text) + "E"
+        text = [char2idx[char] for char in text]
 
-        # Batching
-        texts, mels, mags, fnames = tf.train.batch([text, mel, mag, fname],
-                                                   num_threads=8,
-                                                   batch_size=hp.batch_size,
-                                                   capacity=hp.batch_size * 64,
-                                                   allow_smaller_final_batch=False,
-                                                   dynamic_pad=True)
+        text = np.asarray(text, dtype=np.int32)
+        wav = np.asarray(self.load_wav(wav_name)[0], dtype=np.float32)
 
-    return texts, mels, mags, fnames, num_batch
+        return wav_name, text, wav
+
+
+def collate_fn(data):
+    fpath = data[0]
+    text = data[1]
+    wav = data[2]
+
+    text = _prepare_data(text).astype(np.int32)
+    wav = _prepare_data(wav)
+
+    fname, mel, mag = load_spectrograms(fpath)
+
+    return text, mag, mel
+
+def _pad_data(x, length):
+    return np.pad(x, (0, length - x.shape[0]), mode='constant', constant_values=0)
+
+def _prepare_data(inputs):
+    max_len = max((len(x) for x in inputs))
+    return np.stack([_pad_data(x, max_len) for x in inputs])
 
