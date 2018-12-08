@@ -1,6 +1,6 @@
 from hyperparams import Hyperparams as hp
 import numpy as np
-
+import pandas as pd
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
@@ -9,6 +9,8 @@ import re
 import codecs
 import os
 import unicodedata
+import librosa
+
 
 
 
@@ -55,6 +57,7 @@ def load_data(mode="train"):
         return texts
 
 
+
 class get_Dataset(Dataset):
     def __init__(self, csv_file, wav_file):
         
@@ -64,56 +67,55 @@ class get_Dataset(Dataset):
     def __len__(self):
         return len(self.metadata)
 
-    def load_vocab(self):
-        vocab = u'''␀␃ !',-.:;?ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz''' # ␀: Padding ␃: End of Sentence
-
-        char2idx = {char: idx for idx, char in enumerate(vocab)}
-        idx2char = {idx: char for idx, char in enumerate(vocab)}
-        return char2idx, idx2char
-
-    def text_normalize(self, text):
-        vocab = u'''␀␃ !',-.:;?ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz''' # ␀: Padding ␃: End of Sentence
-
-        text = ''.join(char for char in unicodedata.normalize('NFD', text)
-                           if unicodedata.category(char) != 'Mn') # Strip accents
-
-        text = re.sub("[^{}]".format(vocab), " ", text)
-        text = re.sub("[ ]+", " ", text)
-        return text
-
     def load_wav(self, filename):
         return librosa.load(filename, sr=22050)
 
     def __getitem__(self, idx):
-        char2idx, idx2char = self.load_vocab()
+        char2idx, idx2char = load_vocab()
                 
-        wav_name = os.path.join(self.wav_file, self.metadata.ix[idx,0]) + '.wav'
-        text = self.metadata.ix[idx, 1]
-        text = self.text_normalize(text) + "E"
+        wav_name = os.path.join(self.wav_file, self.metadata.iloc[idx,0]) + '.wav'
+        text = self.metadata.iloc[idx, 1]
+        text = text_normalize(text) + "E"
         text = [char2idx[char] for char in text]
 
         text = np.asarray(text, dtype=np.int32)
         wav = np.asarray(self.load_wav(wav_name)[0], dtype=np.float32)
+        
+        sample = {'wav_name':wav_name, 'text':text, 'wav':wav}
+        return sample
 
-        return wav_name, text, wav
 
-
-def collate_fn(data):
-    fpath = data[0]
-    text = data[1]
-    wav = data[2]
+def collate_fn(batch):
+    fpath = [d['wav_name'] for d in batch]
+    text = [d['text'] for d in batch]
+    wav = [d['wav'] for d in batch]
 
     text = _prepare_data(text).astype(np.int32)
-    wav = _prepare_data(wav)
+    fname = []
+    mel = []
+    mag = []
 
-    fname, mel, mag = load_spectrograms(fpath)
+    for i in fpath:
+        fname_i, mel_i, mag_i = load_spectrograms(i)
+        fname.append(fname_i)
+        mel.append(mel_i)
+        mag.append(mag_i)
 
-    return text, mag, mel
+    mel = __prepare_data(mel)
+    mag = __prepare_data(mag)
+    
+    return fname, text, mel, mag
 
 def _pad_data(x, length):
     return np.pad(x, (0, length - x.shape[0]), mode='constant', constant_values=0)
+
+def __pad_data(x, length):
+    return np.pad(x, ((0,length - x.shape[0]), (0, 0)), mode='constant', constant_values=0)
 
 def _prepare_data(inputs):
     max_len = max((len(x) for x in inputs))
     return np.stack([_pad_data(x, max_len) for x in inputs])
 
+def __prepare_data(inputs):
+    max_len = max((x.shape[0] for x in inputs))
+    return np.stack([__pad_data(x, max_len) for x in inputs])

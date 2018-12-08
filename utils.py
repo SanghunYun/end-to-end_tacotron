@@ -8,7 +8,7 @@ from __future__ import print_function, division
 
 from hyperparams import Hyperparams as hp
 import numpy as np
-import tensorflow as tf
+import torch
 import librosa
 import copy
 import matplotlib
@@ -124,9 +124,15 @@ def plot_alignment(alignment, gs):
     plt.close(fig)
 
 def learning_rate_decay(init_lr, global_step, warmup_steps=4000.):
-    '''Noam scheme from tensor2tensor'''
-    step = tf.cast(global_step + 1, dtype=tf.float32)
-    return init_lr * warmup_steps ** 0.5 * tf.minimum(step * warmup_steps ** -1.5, step ** -0.5)
+    """
+        TODO: input globa_step 은 tensor로 들어왔던건데,, + 1 가능한지
+        처음에 만들때 0으로 만들어놓음
+        
+        들어오는 global_step이 그냥 변수니깐 np.minimum 썼음
+    """
+    global_step += 1
+    step = global_step.type(torch.Tensor.float32)
+    return init_lr * warmup_steps ** 0.5 * np.minimum(step*warmup_steps**-1.5, step**-0.5)
 
 def load_spectrograms(fpath):
     fname = os.path.basename(fpath)
