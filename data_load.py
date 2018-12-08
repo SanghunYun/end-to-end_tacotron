@@ -101,12 +101,21 @@ def collate_fn(batch):
         mel.append(mel_i)
         mag.append(mag_i)
 
+    mel = __prepare_data(mel)
+    mag = __prepare_data(mag)
+    
     return fname, text, mel, mag
 
 def _pad_data(x, length):
     return np.pad(x, (0, length - x.shape[0]), mode='constant', constant_values=0)
 
+def __pad_data(x, length):
+    return np.pad(x, ((0,length - x.shape[0]), (0, 0)), mode='constant', constant_values=0)
+
 def _prepare_data(inputs):
     max_len = max((len(x) for x in inputs))
     return np.stack([_pad_data(x, max_len) for x in inputs])
 
+def __prepare_data(inputs):
+    max_len = max((x.shape[0] for x in inputs))
+    return np.stack([__pad_data(x, max_len) for x in inputs])

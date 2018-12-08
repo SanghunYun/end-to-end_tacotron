@@ -69,9 +69,11 @@ def main():
         """
 
         dataloader = DataLoader(dataset, batch_size=hp.batch_size,
-                                shuffle=True, collate_fn=collate_fn, drop_last=True, num_workers=4)
+                                shuffle=True, collate_fn=collate_fn, drop_last=True)
     
         for i, data in enumerate(dataloader):
+            #'text (N, Tx)  mel (N, Ty//r, n_mel*r)  mag (N, Ty, n_fft//2+1)'
+
             fname, text, mel, mag = data
 
             """
