@@ -348,5 +348,7 @@ class Tacotron(nn.Module):
         prosody = prosody.repeat(1, hp.Tx).view(hp.batch_size, hp.Tx, -1) # (N, 128)  -->  (N, Tx, 128)
         memory = torch.cat((texts, prosody), -1)       # (N, Tx, E) + (N, Tx, 128) = (N, Tx, E+128)
         
-        out1, align2 = self.decoder1(mel_input, memory)
+        out1, align1 = self.decoder1(mel_input, memory)
         out2 = self.decoder2(out1)
+
+        return out1, out2
