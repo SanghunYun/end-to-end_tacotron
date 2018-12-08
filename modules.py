@@ -82,7 +82,7 @@ class conv1d(nn.Module):
 
     """
     inputs : (N,Tx, E/2)
-    channels : shape[2]
+    channel : shape[2]
         
     (N,C,L) - N,channel(E/2), length(Tx)로 바꾼 후 conv계산 -> 다시 N,Tx,E/2 꼴로 바꿔줘야 함
     pytorch에서는 in_channel이 shape[1], tensorflow에서는 in_channel이 shape[2], shape[0]이 batch 크기인 건 공통
@@ -90,22 +90,21 @@ class conv1d(nn.Module):
     https://discuss.pytorch.org/t/output-shape-of-conv1d-in-pytorch-and-keras-are-different/3398 참고
     """
 
-    def __init__(self, shape, filters=None, size=1, rate=1, padding="SAME", use_bias=False, activation_fn=None):
+    def __init__(self, channel, filters=None, size=1, rate=1, padding="SAME", use_bias=False, activation_fn=None):
         super(conv1d,self).__init__()
         self.activation_fn=activation_fn
         self.relu = torch.nn.ReLU()
 
         #filters=None이면 filter의 수는 input channel의 수와 같게 (E/2)
         if filters == None:
-            filters = shape[2]
+            filters = channel
 
         if padding == "SAME":
             pad_size = max(int((size-1)/2),int(size/2))
         else:
             pad_size=0
 
-        # shape[2] = E/2
-        self.conv = torch.nn.Conv1d(shape[2], filters, kernel_size=size, stride=rate, padding=pad_size, bias=use_bias)
+        self.conv = torch.nn.Conv1d(channel, filters, kernel_size=size, stride=rate, padding=pad_size, bias=use_bias)
 
     def forward(self, inputs):
 
@@ -152,7 +151,8 @@ class gru(nn.Module):
     applies gru
 
     inputs : (N,Time(T), Channel(E/2...))
-    __init__ 단계에서 module을 선언해줘야 해서 num_unit=None이면 안됨, shape[2]라도 넣어줘야...그런데 network에서는 그럴 일은 없는듯
+
+    torch.nn.gru input : (T,N,E/2)
 
     num_units = # of hidden units passed (width of gru)
 
@@ -167,14 +167,14 @@ class gru(nn.Module):
     """
 
 
-    def __init__(self, channel, time, num_units=None, bidirection=False):
+    def __init__(self, channel, num_units=None, bidirection=False):
         super(gru,self).__init__()
         if num_units == None:
             num_units = channel
         if bidirection == True:
-            self.gru = torch.nn.GRU(input_size=channel ,num_layers = time, hidden_size=num_units, bidirection=True)
+            self.gru = torch.nn.GRU(input_size=channel, hidden_size=num_units, bidirection=True)
         else:
-            self.gru = torch.nn.GRU(input_size=channel, num_layers = time, hidden_size=num_units, bidirection=False)
+            self.gru = torch.nn.GRU(input_size=channel, hidden_size=num_units, bidirection=False)
 
     
     def forward(self,inputs):
@@ -189,11 +189,11 @@ class prenet(nn.Module):
     output : (N, T, num_units/2)
 
     """
-    def __init__(self, shape, num_units=None):
+    def __init__(self, in_dim, num_units=None):
         super(prenet,self).__init__()
         if num_units == None:
             num_units=[hp.embed_size,hp.embed_size//2]
-        self.dense1 = torch.nn.Linear(shape[2],num_units[0])
+        self.dense1 = torch.nn.Linear(in_dim,num_units[0])
         self.dropout1 = torch.nn.Dropout(p=hp.dropout_rate)
         self.dense2 = torch.nn.Linear(num_units[0],num_units[1])
         self.dropout2 = torch.nn.Dropout(p=hp.dropout_rate)
@@ -210,12 +210,12 @@ class highwaynet(nn.Module):
     """
     inputs : (N, T, W) - (ex> N, Tx or Ty/r, E/2)
     """
-    def __init__(self, shape, num_units=None):
+    def __init__(self, in_dim, num_units=None):
         super(highwaynet,self).__init__()
         if num_units == None:
-            num_units = shape[2]
-        self.H = torch.nn.Linear(shape[2],num_units)
-        self.T = torch.nn.Linear(shape[2],num_units)
+            num_units = in_dim
+        self.H = torch.nn.Linear(in_dim, num_units)
+        self.T = torch.nn.Linear(in_dim,num_units)
         self.relu = torch.nn.ReLU()
         self.sigmoid = torch.nn.Sigmoid()
 

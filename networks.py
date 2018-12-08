@@ -7,28 +7,24 @@ from attentionRNN import *
 # import modules import *
 
 class transcript_encoder(nn.Module):
-    def __init__(self, shape, is_training=True):
+    def __init__(self, is_training=True):
         super(transcript_encoder, self).__init__()
-        self.shape=shape
-        self.prenet = prenet(self.shape) #nn.Module에서 알아서 prop... is_training 필요 없을 듯
-        self.shape=(self.shape[0],self.shape[1],self.shape[2]/2) #(N, Tx, E/2)
+        self.prenet = prenet(hp.embed_size) #nn.Module에서 알아서 prop... is_training 필요 없을 듯
 
         self.conv1d_banks = conv1d_banks(K=hp.encoder_num_banks)
-        self.shape=(self.shape[0],self.shape[1],self.shape[2]*hp.encoder_num_banks) #(N, Tx, E/2*K)
 
         self.max_pool = nn.MaxPool1d(kernel_size=2, stride=1)          # pytorch
         self.conv1d_1 = conv1d(self.shape, filters=hp.embed_size//2, size=3)
-        self.shape = (self.shape[0], self.shape[1], self.shape[2]//hp.encoder_num_banks) #(N, Tx, E/2)
-        self.bn_1 = bn(self.shape[2], activation_fn="ReLU")
+        self.bn_1 = bn(hp.embed_size//2, activation_fn="ReLU")
 
         self.conv1d_2 = conv1d(self.shape, filters=hp.embed_size//2, size=3) 
         #self.relu = nn.ReLU()
         #self.relu_1 = nn.ReLU()
         #self.relu_2 = nn.ReLU()
         
-        self.bn_2 = bn(self.shape[2], activation_fn="ReLU")
+        self.bn_2 = bn(hp.embed_size//2, activation_fn="ReLU")
         self.highwaynet = highwaynet(self.shape, num_units=hp.embed_size//2)
-        self.gru = gru(channel = self.shape[2],time = self.shape[1], num_units=hp.embed_size//2, bidirection=True) #output : (N,Tx,E) - bidirectional 때문               # pytorch 
+        self.gru = gru(channel = hp.embed_size//2, num_units=hp.embed_size//2, bidirection=True) #output : (N,Tx,E) - bidirectional 때문               # pytorch 
         
     def forward(self, inputs):
         # prenet
@@ -72,9 +68,8 @@ class reference_encoder(nn.Module):
 
     """
 
-    def __init__(self, shape):
+    def __init__(self):
         super(reference_encoder, self).__init__()
-        self.shape = shape # (N,Ty,n_mels,1)
         # half padding    
         # int(k-1/2)
         pad = int((3-1)/2)
@@ -105,7 +100,7 @@ class reference_encoder(nn.Module):
         #(N, 128, n_mels/64, T/64)
         self.bn_6 = bn(128,activation_fn="ReLU")
 
-        self.gru = gru(channel = 128, time = self.shape[1]/64, num_units=128, bidirection=False)
+        self.gru = gru(channel = 128, num_units=128, bidirection=False)
 
         # tf.layers.dense(inputs, units(output))
         self.dense = nn.Linear(128, 128)
@@ -163,11 +158,10 @@ class decoder1(nn.Module):
         Referenced https://github.com/r9y9/tacotron_pytorch
     """
     
-    def __init__(self, shape, is_training): #여기서 shape는 Go의 shape여야 함
+    def __init__(self, is_training):
         super(decoder1, self).__init__()
         self.is_training = is_training
-        self.shape = shape
-        self.prenet = prenet(self.shape)
+        self.prenet = prenet(hp.n_mels)
         self.attention_rnn = AttentionWrapper(
             nn.GRUCell(256 + 128, 256),
             BahdanauAttention(256)
@@ -221,7 +215,7 @@ class decoder1(nn.Module):
 
         while True:
             if t > 0:
-                current_input = outputs[-1,:,-hp.n_mels] if greedy else inputs[t - 1,:,-hp.n_mels]
+                current_input = outputs[-1][:,-hp.n_mels] if greedy else inputs[t-1,:,-hp.n_mels]
             # Prenet
             current_input = self.prenet(current_input)
 
@@ -286,24 +280,21 @@ class decoder2(nn.Module):
         output : (N, Ty, 1+n_fft//2)
     """
 
-    def __init__(self,shape):
+    def __init__(self):
         super(decoder2, self).__init__()
-        self.shape = shape
         self.conv1d_banks = conv1d_banks(K=hp.decoder_num_banks) # (N, Ty, E*K/2)
         self.max_pool1d = nn.MaxPool1d(kernel_size=2, stride=1)          # pytorch
 
-        self.shape(shape[0],shape[1],hp.embed_size*hp.decoder_num_banks//2)
 
-        self.conv1d_1 = conv1d(shape, filters=hp.embed_size // 2, size=3) # (N, Ty, E/2)
-        self.shape = (shape[0],shape[1], hp.embed_size//2) # (N, Ty, E/2)
-        self.bn_1 = bn(shape[2], activation_fn="ReLU")
+        self.conv1d_1 = conv1d(hp.embed_size*hp.decoder_num_banks//2, filters=hp.embed_size // 2, size=3) # (N, Ty, E/2)
+        self.bn_1 = bn(hp.embed_size//2, activation_fn="ReLU")
 
-        self.conv1d_2 = conv1d(shape, filters=hp.n_mels, size=3)
-        self.bn_2 = bn(shape[2])
+        self.conv1d_2 = conv1d(hp.embed_size//2, filters=hp.n_mels, size=3)
+        self.bn_2 = bn(hp.embed_size//2)
 
         self.dense = nn.Linear(hp.n_mels,hp.embed_size//2)
-        self.highwaynet = highwaynet(shape, num_units=hp.embed_size//2)
-        self.gru = gru(channel = shape[2],time=shape[1], bidirection=True)
+        self.highwaynet = highwaynet(hp.embed_size//2, num_units=hp.embed_size//2)
+        self.gru = gru(channel = hp.embed_size//2, bidirection=True)
 
     def forward(self, inputs):
         # (N, Ty/r,  n_mels*r)  -->  (N, Ty, n_mels)
