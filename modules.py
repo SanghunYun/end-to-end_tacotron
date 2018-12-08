@@ -181,49 +181,6 @@ class gru(nn.Module):
         input_t = torch.Tensor.transpose(inputs,0,1)
         output,hn = self.gru(input_t)   #hn : hidden states for each t
         return output
-    
-class attention_decoder(nn.Module):
-    """
-    inputs : (N, Ty/r, E/2)
-
-    used BahdanauAttention implementation from https://github.com/AuCson/PyTorch-Batch-Attention-Seq2seq
-    
-
-    """
-    def __init__(self, shape, memory, num_units=None):
-        super(attention_decoder,self).__init__()
-        if num_units == None:
-            num_units = shape[2]
-        self.memory=memory
-        #self.attentionRNN = BahdanauAttnDecoderRNN(hidden_size=num_units, embed_size=)
-
-
-    def forward(self,inputs):
-        
-        return
-
-class prenet_each(nn.Module):
-    """
-    inputs : (N, Ty/r, E/2)
-
-    """
-    def __init__(self, shape, num_units=None):
-        super(prenet_each,self).__init__()
-        if num_units == None:
-            num_units=[hp.embed_size,hp.embed_size//2]
-        self.dense1 = torch.nn.Linear(shape[2],num_units[0])
-        self.dropout1 = torch.nn.Dropout(p=hp.dropout_rate)
-        self.dense2 = torch.nn.Linear(num_units[0],num_units[1])
-        self.dropout2 = torch.nn.Dropout(p=hp.dropout_rate)
-
-    def forward(self,inputs):
-        rst = self.dense1(inputs)
-        rst = self.dropout1(rst)
-        rst = self.dense2(rst)
-        rst = self.dropout2(rst)
-        return rst
-
-
 
 class prenet(nn.Module):
     """

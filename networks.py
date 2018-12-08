@@ -2,6 +2,7 @@ from hyperparams import Hyperparams as hp
 import torch
 import torch.nn as nn
 from modules import *
+from attentionRNN import *
 
 # import modules import *
 
@@ -155,24 +156,90 @@ class reference_encoder(nn.Module):
 class decoder1(nn.Module):
     
     """
-        inputs : (N, Ty/r, n_mels*r)
+        inputs : (N, Ty/r, n_mels)
         memory : (N, Tx, E)
-
         return : (N, Ty/r, n_mels*r)
+
+        Referenced https://github.com/r9y9/tacotron_pytorch
     """
     
-    def __init__(self, shape, is_training):
+    def __init__(self, shape, is_training): #여기서 shape는 Go의 shape여야 함
         super(decoder1, self).__init__()
-        shape = self.shape
         self.is_training = is_training
-        
-        self.prenet = prenet()
-        self.attention_decoder(num_units=hp.embed_size)
-        self.gru_1 = gru(num_units=hp.embed_size, bidirection=False)
-        self.gru_2 = gru(num_untis=hp.embed_size, bidirection=False)
-        self.dense = nn.Linear(hp.embed_size, hp.n_mels*hp.r)
+        self.shape = shape
+        self.prenet = prenet(self.shape)
+        self.attention_rnn = AttentionWrapper(
+            nn.GRUCell(256 + 128, 256),
+            BahdanauAttention(256)
+        )
+        self.decoder_rnns = nn.ModuleList(
+            [nn.GRUCell(256, 256) for _ in range(2)])
+        self.memory_layer = nn.Linear(256, 256, bias=False)
+        self.proj_to_mel = nn.Linear(256, hp.n_mels*hp.r)
 
-    def forward(self, inputs):
+    def forward(self, inputs, memory):
+        N = memory.size(0)
+        processed_memory = self.memory_layer(memory)
+        """
+        if memory_lengths is not None:
+            mask = get_mask_from_lengths(processed_memory, memory_lengths)
+        else:
+            mask = None
+        """
+        # Run greedy decoding if inputs is None (at Training time)
+        greedy = (self.is_training == True)
+
+        if self.is_training==False:
+            # Grouping multiple frames if necessary
+            if inputs.size(-1) == hp.n_mels:
+                inputs = inputs.view(N, inputs.size(1) // hp.r, -1)
+            assert inputs.size(-1) == hp.n_mels * hp.r
+            T_decoder = inputs.size(1)
+
+        # go frames
+        initial_input = Variable(
+            memory.data.new(N, hp.n_mels * hp.r).zero_())
+
+        while True:
+            if t > 0:
+                current_input = outputs[-1] if greedy else inputs[t - 1]
+            # Prenet
+            current_input = self.prenet(current_input)
+
+            # Attention RNN
+            attention_rnn_hidden, current_attention, alignment = self.attention_rnn(
+                current_input, current_attention, attention_rnn_hidden,
+                encoder_outputs, processed_memory=processed_memory, mask=mask)
+
+            # Concat RNN output and attention context vector
+            decoder_input = self.project_to_decoder_in(
+                torch.cat((attention_rnn_hidden, current_attention), -1))
+
+            # Pass through the decoder RNNs
+            for idx in range(len(self.decoder_rnns)):
+                decoder_rnn_hiddens[idx] = self.decoder_rnns[idx](
+                    decoder_input, decoder_rnn_hiddens[idx])
+                # Residual connectinon
+                decoder_input = decoder_rnn_hiddens[idx] + decoder_input
+
+            output = decoder_input
+            output = self.proj_to_mel(output)
+
+            outputs += [output]
+            alignments += [alignment]
+
+            t += 1
+
+            if t >= T_decoder:
+                break
+        assert greedy or len(outputs) == T_decoder
+
+        alignments = torch.stack(alignments).transpose(0, 1)
+        outputs = torch.stack(outputs).transpose(0, 1).contiguous()
+
+        return outputs, alignments
+
+        """
         # Decoder prenet  (N, Ty/r, n_mels*r)  -->  (N, Ty/r, E/2)
         inputs = self.prenet(inputs) 
 
@@ -189,7 +256,9 @@ class decoder1(nn.Module):
         # Outputs => (N, Ty/r, n_mels*r)
         mel_hats = self.dense(dec)
 
+
         return mel_hats #, alignments
+        """
 
 class decoder2(nn.Module):
 

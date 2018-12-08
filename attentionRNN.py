@@ -1,77 +1,84 @@
 import torch
 from torch.autograd import Variable
-import torch.nn as nn
-import torch.nn.functional as F
-from collections import OrderedDict
-import numpy as np
-import hyperparams as hp
+from torch import nn
+from torch.nn import functional as F
 
-class AttentionDecoder(nn.Module):
-    """
-    Decoder with attention mechanism (Vinyals et al.)
-    """
-    def __init__(self, num_units):
+
+class BahdanauAttention(nn.Module):
+    def __init__(self, dim):
+        super(BahdanauAttention, self).__init__()
+        self.query_layer = nn.Linear(dim, dim, bias=False)
+        self.tanh = nn.Tanh()
+        self.v = nn.Linear(dim, 1, bias=False)
+
+    def forward(self, query, processed_memory):
         """
-        :param num_units: dimension of hidden units
+        Args:
+            query: (batch, 1, dim) or (batch, dim)
+            processed_memory: (batch, max_time, dim)
         """
-        super(AttentionDecoder, self).__init__()
-        self.num_units = num_units
+        if query.dim() == 2:
+            # insert time-axis for broadcasting
+            query = query.unsqueeze(1)
+        # (batch, 1, dim)
+        processed_query = self.query_layer(query)
 
-        self.v = nn.Linear(num_units, 1, bias=False)
-        self.W1 = nn.Linear(num_units, num_units, bias=False)
-        self.W2 = nn.Linear(num_units, num_units, bias=False)
+        # (batch, max_time, 1)
+        alignment = self.v(self.tanh(processed_query + processed_memory))
 
-        self.attn_grucell = nn.GRUCell(num_units // 2, num_units)
-        self.gru1 = nn.GRUCell(num_units, num_units)
-        self.gru2 = nn.GRUCell(num_units, num_units)
+        # (batch, max_time)
+        return alignment.squeeze(-1)
 
-        self.attn_projection = nn.Linear(num_units * 2, num_units)
-        self.out = nn.Linear(num_units, hp.num_mels * hp.outputs_per_step)
 
-    def forward(self, decoder_input, memory, attn_hidden, gru1_hidden, gru2_hidden):
+def get_mask_from_lengths(memory, memory_lengths):
+    """Get mask tensor from list of length
+    Args:
+        memory: (batch, max_time, dim)
+        memory_lengths: array like
+    """
+    mask = memory.data.new(memory.size(0), memory.size(1)).byte().zero_()
+    for idx, l in enumerate(memory_lengths):
+        mask[idx][:l] = 1
+    return ~mask
 
-        memory_len = memory.size()[1]
-        batch_size = memory.size()[0]
 
-        # Get keys
-        keys = self.W1(memory.contiguous().view(-1, self.num_units))
-        keys = keys.view(-1, memory_len, self.num_units)
+class AttentionWrapper(nn.Module):
+    def __init__(self, rnn_cell, attention_mechanism,
+                 score_mask_value=-float("inf")):
+        super(AttentionWrapper, self).__init__()
+        self.rnn_cell = rnn_cell
+        self.attention_mechanism = attention_mechanism
+        self.score_mask_value = score_mask_value
 
-        # Get hidden state (query) passed through GRUcell
-        d_t = self.attn_grucell(decoder_input, attn_hidden)
+    def forward(self, query, attention, cell_state, memory,
+                processed_memory=None, mask=None, memory_lengths=None):
+        if processed_memory is None:
+            processed_memory = memory
+        if memory_lengths is not None and mask is None:
+            mask = get_mask_from_lengths(memory, memory_lengths)
 
-        # Duplicate query with same dimension of keys for matrix operation (Speed up)
-        d_t_duplicate = self.W2(d_t).unsqueeze(1).expand_as(memory)
+        # Concat input query and previous attention context
+        cell_input = torch.Tensor.cat((query, attention), -1)
 
-        # Calculate attention score and get attention weights
-        attn_weights = self.v(F.tanh(keys + d_t_duplicate).view(-1, self.num_units)).view(-1, memory_len, 1)
-        attn_weights = attn_weights.squeeze(2)
-        attn_weights = F.softmax(attn_weights)
+        # Feed it to RNN
+        cell_output = self.rnn_cell(cell_input, cell_state)
 
-        # Concatenate with original query
-        d_t_prime = torch.bmm(attn_weights.view([batch_size,1,-1]), memory).squeeze(1)
+        # Alignment
+        # (batch, max_time)
+        alignment = self.attention_mechanism(cell_output, processed_memory)
 
-        # Residual GRU
-        gru1_input = self.attn_projection(torch.cat([d_t, d_t_prime], 1))
-        gru1_hidden = self.gru1(gru1_input, gru1_hidden)
-        gru2_input = gru1_input + gru1_hidden
+        if mask is not None:
+            mask = mask.view(query.size(0), -1)
+            alignment.data.masked_fill_(mask, self.score_mask_value)
 
-        gru2_hidden = self.gru2(gru2_input, gru2_hidden)
-        bf_out = gru2_input + gru2_hidden
+        # Normalize attention weight
+        alignment = F.softmax(alignment)
 
-        # Output
-        output = self.out(bf_out).view(-1, hp.num_mels, hp.outputs_per_step)
+        # Attention context vector
+        # (batch, 1, dim)
+        attention = torch.Tensor.bmm(alignment.unsqueeze(1), memory)
 
-        return output, d_t, gru1_hidden, gru2_hidden
+        # (batch, dim)
+        attention = attention.squeeze(1)
 
-    def inithidden(self, batch_size):
-        if use_cuda:
-            attn_hidden = Variable(torch.zeros(batch_size, self.num_units), requires_grad=False).cuda()
-            gru1_hidden = Variable(torch.zeros(batch_size, self.num_units), requires_grad=False).cuda()
-            gru2_hidden = Variable(torch.zeros(batch_size, self.num_units), requires_grad=False).cuda()
-        else:
-            attn_hidden = Variable(torch.zeros(batch_size, self.num_units), requires_grad=False)
-            gru1_hidden = Variable(torch.zeros(batch_size, self.num_units), requires_grad=False)
-            gru2_hidden = Variable(torch.zeros(batch_size, self.num_units), requires_grad=False)
-
-        return attn_hidden, gru1_hidden, gru2_hidden
+        return cell_output, attention, alignment
