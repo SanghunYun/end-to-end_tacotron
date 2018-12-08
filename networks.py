@@ -286,7 +286,6 @@ class decoder2(nn.Module):
         self.highwaynet = highwaynet(shape, num_units=hp.embed_size//2)
         self.gru = gru(channel = shape[2],time=shape[1], hp.embed_size//2, bidirection=True)
 
-
     def forward(self, inputs):
         # (N, Ty/r,  n_mels*r)  -->  (N, Ty, n_mels)
         inputs = inputs.view([*inputs.shape][0], -1, hp.n_mels)

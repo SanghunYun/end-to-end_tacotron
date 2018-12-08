@@ -48,4 +48,12 @@ class Hyperparams:
 
 
 
-
+  #
+    checkpoint_path = 'C:/2018-2/LJSpeech-1.1/checkpoint/'
+    # TODO: 수정 필요
+    num_freq = 1024
+    epochs = num_iterations
+    log_step = 100
+    decay_step = [500000, 1000000, 2000000]
+    save_step = 2000
+    
