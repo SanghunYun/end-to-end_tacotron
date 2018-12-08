@@ -73,16 +73,16 @@ def main():
     
         for i, data in enumerate(dataloader):
             #'text (N, Tx)  mel (N, Ty//r, n_mel*r)  mag (N, Ty, n_fft//2+1)'
-
             fname, text, mel, mag = data
 
             """
                     elif mode=='eval'
                     else # synthesize
             """
-
+            """
             mel_input = np.concatenate((np.zeros([hp.batch_size, hp.n_mels, 1], dtype=np.float32), mel[:,:,1:]), axis=2)
- 
+            """
+            mel_input = mel
             
             # input : text_input, mel_input
             # for loss mel, linear
