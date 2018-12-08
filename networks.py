@@ -113,7 +113,7 @@ class reference_encoder(nn.Module):
     
     def forward(self, inputs):
 
-        input_t = torch.transpose(inputs,1,3) # transpose to (N,C,H,W)
+        input_t = torch.Tensor.transpose(inputs,1,3) # transpose to (N,C,H,W)
         # conv2d X 6  (N, 1, Ty, n_mels)  -->  (N, 128, Ty/64, n_mels/64, 1)
 
         tensor = self.conv2d_1(input_t)
@@ -139,10 +139,10 @@ class reference_encoder(nn.Module):
         channels = []
         for i in range(0, C):
             channels.append(tensor[:, i, :, :])
-        tensor = torch.cat(channels, dim=2)
+        tensor = torch.Tensor.cat(channels, dim=2)
 
         # GRU (N, T/64, 128*n_mels/64)  -->  (N, 128)
-        tensor = self,gru(tensor)
+        tensor = self.gru(tensor)
         tensor = tensor[:, -1, :]
 
         # FC --> (N, 128)
@@ -180,12 +180,12 @@ class decoder1(nn.Module):
     def forward(self, inputs, memory):
         N = memory.size(0)
         processed_memory = self.memory_layer(memory)
-        """
+        memory_lengths = len(memory)
         if memory_lengths is not None:
             mask = get_mask_from_lengths(processed_memory, memory_lengths)
         else:
             mask = None
-        """
+        
         # Run greedy decoding if inputs is None (at Training time)
         greedy = (self.is_training == True)
 
@@ -200,6 +200,25 @@ class decoder1(nn.Module):
         initial_input = Variable(
             memory.data.new(N, hp.n_mels * hp.r).zero_())
 
+         # Init decoder states
+        attention_rnn_hidden = Variable(
+            memory.data.new(N, 256).zero_())
+        decoder_rnn_hiddens = [Variable(
+            memory.data.new(N, 256).zero_())
+            for _ in range(len(self.decoder_rnns))]
+        current_attention = Variable(
+            memory.data.new(N, 256).zero_())
+
+        # Time first (T_decoder, B, in_dim)
+        if self.is_training==False:
+            inputs = inputs.transpose(0, 1)
+
+        outputs = []
+        alignments = []
+
+        t = 0
+        current_input = initial_input
+
         while True:
             if t > 0:
                 current_input = outputs[-1] if greedy else inputs[t - 1]
@@ -209,11 +228,11 @@ class decoder1(nn.Module):
             # Attention RNN
             attention_rnn_hidden, current_attention, alignment = self.attention_rnn(
                 current_input, current_attention, attention_rnn_hidden,
-                encoder_outputs, processed_memory=processed_memory, mask=mask)
+                memory, processed_memory=processed_memory, mask=mask)
 
             # Concat RNN output and attention context vector
             decoder_input = self.project_to_decoder_in(
-                torch.cat((attention_rnn_hidden, current_attention), -1))
+                torch.Tensor.cat((attention_rnn_hidden, current_attention), -1))
 
             # Pass through the decoder RNNs
             for idx in range(len(self.decoder_rnns)):
@@ -234,8 +253,8 @@ class decoder1(nn.Module):
                 break
         assert greedy or len(outputs) == T_decoder
 
-        alignments = torch.stack(alignments).transpose(0, 1)
-        outputs = torch.stack(outputs).transpose(0, 1).contiguous()
+        alignments = torch.Tensor.stack(alignments).transpose(0, 1)
+        outputs = torch.Tensor.stack(outputs).transpose(0, 1).contiguous()
 
         return outputs, alignments
 
@@ -276,7 +295,7 @@ class decoder2(nn.Module):
         self.shape(shape[0],shape[1],hp.embed_size*hp.decoder_num_banks//2)
 
         self.conv1d_1 = conv1d(shape, filters=hp.embed_size // 2, size=3) # (N, Ty, E/2)
-        self.shape = (shape[0],shape[1], hp.embed_size//2)
+        self.shape = (shape[0],shape[1], hp.embed_size//2) # (N, Ty, E/2)
         self.bn_1 = bn(shape[2], activation_fn="ReLU")
 
         self.conv1d_2 = conv1d(shape, filters=hp.n_mels, size=3)
@@ -284,7 +303,7 @@ class decoder2(nn.Module):
 
         self.dense = nn.Linear(hp.n_mels,hp.embed_size//2)
         self.highwaynet = highwaynet(shape, num_units=hp.embed_size//2)
-        self.gru = gru(channel = shape[2],time=shape[1], hp.embed_size//2, bidirection=True)
+        self.gru = gru(channel = shape[2],time=shape[1], bidirection=True)
 
     def forward(self, inputs):
         # (N, Ty/r,  n_mels*r)  -->  (N, Ty, n_mels)
