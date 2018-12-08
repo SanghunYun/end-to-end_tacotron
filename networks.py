@@ -1,29 +1,34 @@
 from hyperparams import Hyperparams as hp
 import torch
 import torch.nn as nn
+from modules import *
 
 # import modules import *
 
 class transcript_encoder(nn.Module):
-    def __init__(self, is_training=True):
+    def __init__(self, shape, is_training=True):
         super(transcript_encoder, self).__init__()
+        self.shape=shape
+        self.prenet = prenet(self.shape) #nn.Module에서 알아서 prop... is_training 필요 없을 듯
+        self.shape=(self.shape[0],self.shape[1],self.shape[2]/2) #(N, Tx, E/2)
 
-        self.is_training = is_training
+        self.conv1d_banks = conv1d_banks(K=hp.encoder_num_banks)
+        self.shape=(self.shape[0],self.shape[1],self.shape[2]*hp.encoder_num_banks) #(N, Tx, E/2*K)
 
-        self.prenet = prenet(is_training=self.is_training)
-        self.conv1d_banks = conv1d_banks(K=hp.encoder_num_banks, is_training=self.is_training)
         self.max_pool = nn.MaxPool1d(kernel_size=2, stride=1)          # pytorch
-        
-        self.conv1d_1 = conv1d(filters=hp.embed_size//2, size=3)  
-        self.conv1d_2 = conv1d(filters=hp.embed_size//2, size=3) 
-        self.relu = nn.ReLU()
+        self.conv1d_1 = conv1d(self.shape, filters=hp.embed_size//2, size=3)
+        self.shape = (self.shape[0], self.shape[1], self.shape[2]//hp.encoder_num_banks) #(N, Tx, E/2)
+        self.bn_1 = bn(self.shape[2], activation_fn="ReLU")
+
+        self.conv1d_2 = conv1d(self.shape, filters=hp.embed_size//2, size=3) 
+        #self.relu = nn.ReLU()
         #self.relu_1 = nn.ReLU()
         #self.relu_2 = nn.ReLU()
-        self.bn_1 = bn(is_training=is_training, activation_fn=self.relu)
-        self.bn_2 = bn(is_training=is_training, activation_fn=self.relu)
-
-        self.gru = gru(num_units=hp.embd_size//2, bidirection=True)                     # pytorch
-        self.highwaynet = highwaynet(num_units=hp.embed_size//2)
+        
+        self.bn_2 = bn(self.shape[2], activation_fn="ReLU")
+        self.highwaynet = highwaynet(self.shape, num_units=hp.embed_size//2)
+        self.gru = gru(channel = self.shape[2],time = self.shape[1], num_units=hp.embed_size//2, bidirection=True) #output : (N,Tx,E) - bidirectional 때문               # pytorch 
+        
     def forward(self, inputs):
         # prenet
         prenet_out = self.prenet(inputs)
@@ -58,65 +63,59 @@ class transcript_encoder(nn.Module):
 class reference_encoder(nn.Module):
 
     """
-        기존 tensorflow
-        inputs : (N, Ty, n_mels, 1)
-                batch, lenght, n_mels, channel
-                NHWC
+    input : (N, Ty, n_mels, 1)
+     - (N,W,H,C) 꼴
 
-        pytorch
-        inptus : (N, 1, Ty, n_mels)
-                batch, channel, lenght, n_mels
-
-        train.py Line 44
-        기존 : N H W C
-        바꿈 : N C H W
-        .unsqueeze(1)  -->  c 확장 위치
+    pytorch에선 (N,C,H,W) 꼴로 받아야 함 -> 그래서 transpose
 
 
     """
 
-    def __init__(self, is_training):
+    def __init__(self, shape):
         super(reference_encoder, self).__init__()
-        self.is_training = is_training
-        
-        # half padding    int(k-1/2)
-        pad = int((3-1)/2)        
+        self.shape = shape # (N,Ty,n_mels,1)
+        # half padding    
+        # int(k-1/2)
+        pad = int((3-1)/2)
 
-        self.relu = nn.ReLU
-
-        self.conv2d_1 = nn.Conv2d(in_channels=1, out_channels=32, kerenl_size=3, stride=2, padding=pad)
+        # 6-Layer Strided Conv2D -> (N, 128, n_mels/64, T/64)
+        self.conv2d_1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3, stride=2, padding=pad)
         #self.relu_1 = nn.ReLU()
-        self.bn_1 = bn(is_training=is_training, activation_fn=self.relu)
+        self.bn_1 = bn(1, activation_fn="ReLU")
 
         self.conv2d_2 = nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=2, padding=pad)
         #self.relu_2 = nn.ReLU()
-        self.bn_2 = bn(is_training=is_training, activation_fn=self.relu)
+        self.bn_2 = bn(32,activation_fn="ReLU")
 
         self.conv2d_3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=2, padding=pad)
         #self.relu_3 = nn.ReLU()
-        self.bn_3 = bn(is_training=is_training, activation_fn=self.relu)
+        self.bn_3 = bn(64,activation_fn="ReLU")
 
         self.conv2d_4 = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=2, padding=pad)
         #self.relu_4 = nn.ReLU()
-        self.bn_4 = bn(is_training=is_training, activation_fn=self.relu)
+        self.bn_4 = bn(64,activation_fn="ReLU")
 
         self.conv2d_5 = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=2, padding=pad)
         #self.relu_5 = nn.ReLU()
-        self.bn_5 = bn(is_training=is_training, activation_fn=self.relu)
+        self.bn_5 = bn(64,activation_fn="ReLU")
 
         self.conv2d_6 = nn.Conv2d(in_channels=128, out_channels=128, kernel_size=3, stride=2, padding=pad)
         #self.relu_6 = nn.ReLU()
-        self.bn_6 = bn(is_training=is_training, activation_fn=self.relu)
+        #(N, 128, n_mels/64, T/64)
+        self.bn_6 = bn(128,activation_fn="ReLU")
 
-        self.gru = gru(num_units=128, bidirection=False)
+        self.gru = gru(channel = 128, time = self.shape[1]/64, num_units=128, bidirection=False)
 
         # tf.layers.dense(inputs, units(output))
         self.dense = nn.Linear(128, 128)
         self.tanh = nn.Tanh()
     
     def forward(self, inputs):
-        # conv2d X 6  (N, 1, Ty, n_mels)  -->  (N, 128, Ty/64, n_mels/64)
-        tensor = self.conv2d_1(inputs)
+
+        input_t = torch.transpose(inputs,1,3) # transpose to (N,C,H,W)
+        # conv2d X 6  (N, 1, Ty, n_mels)  -->  (N, 128, Ty/64, n_mels/64, 1)
+
+        tensor = self.conv2d_1(input_t)
         tensor = self.bn_1(tensor)
 
         tensor = self.conv2d_2(tensor)
@@ -162,12 +161,12 @@ class decoder1(nn.Module):
         return : (N, Ty/r, n_mels*r)
     """
     
-    def __init__(self, is_training):
+    def __init__(self, shape, is_training):
         super(decoder1, self).__init__()
-
+        shape = self.shape
         self.is_training = is_training
         
-        self.prenet = prenet(self.is_training)
+        self.prenet = prenet()
         self.attention_decoder(num_units=hp.embed_size)
         self.gru_1 = gru(num_units=hp.embed_size, bidirection=False)
         self.gru_2 = gru(num_untis=hp.embed_size, bidirection=False)
@@ -199,23 +198,24 @@ class decoder2(nn.Module):
         output : (N, Ty, 1+n_fft//2)
     """
 
-    def __init__(self, is_training):
+    def __init__(self,shape):
         super(decoder2, self).__init__()
-        self.is_training = is_training
-        
-        self.conv1d_banks = conv1d_banks(K=hp.decoder_num_banks, self.is_training)
+        self.shape = shape
+        self.conv1d_banks = conv1d_banks(K=hp.decoder_num_banks) # (N, Ty, E*K/2)
         self.max_pool1d = nn.MaxPool1d(kernel_size=2, stride=1)          # pytorch
 
-        self.relu = nn.ReLU()
-        self.conv1d_1 = conv1d(filters=hp.embed_size // 2, size=3)
-        self.bn_1 = bn(is_training=self.is_training, activation_fn=self.relu)
+        self.shape(shape[0],shape[1],hp.embed_size*hp.decoder_num_banks//2)
 
-        self.conv1d_2 = conv1d(filters=hp.n_mels, size=3)
-        self.bn_2 = bn(is_training=self.is_training)
+        self.conv1d_1 = conv1d(shape, filters=hp.embed_size // 2, size=3) # (N, Ty, E/2)
+        self.shape = (shape[0],shape[1], hp.embed_size//2)
+        self.bn_1 = bn(shape[2], activation_fn="ReLU")
+
+        self.conv1d_2 = conv1d(shape, filters=hp.n_mels, size=3)
+        self.bn_2 = bn(shape[2])
 
         self.dense = nn.Linear(hp.n_mels,hp.embed_size//2)
-        self.highwaynet = highwaynet(num_units=hp.embed_size//2)
-        self.gru = gru(hp.embed_size//2, bidirection=True)
+        self.highwaynet = highwaynet(shape, num_units=hp.embed_size//2)
+        self.gru = gru(channel = shape[2],time=shape[1], hp.embed_size//2, bidirection=True)
 
 
     def forward(self, inputs):
@@ -223,6 +223,9 @@ class decoder2(nn.Module):
         inputs = inputs.view([*inputs.shape][0], -1, hp.n_mels)
 
         # conv1d bank
+        dec=self.conv1d_banks(K=hp.decoder_num_banks)
+
+        # Max pooling
         dec = self.max_pool1d(dec)
 
         ## conv1d projections

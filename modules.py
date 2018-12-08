@@ -8,12 +8,11 @@ https://www.github.com/kyubyong/expressive_tacotron
 from __future__ import print_function
 
 from hyperparams import Hyperparams as hp
-import torch
+from torch import *
 from torch.autograd import Variable
 from torch import nn
 from attentionRNN import BahdanauAttnDecoderRNN
 
-dtype = torch.float
 vocab = u'''␀␃ !',-.:;?ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'''
 vocab_size=len(vocab)
 har_to_ix = {char: i for i, char in enumerate(vocab)}
@@ -41,13 +40,13 @@ class embed(nn.Module):
         
         ##if zero_pad==True, add zeros to first row
         ## - 일단 없어서 구현 안함
-        return self.lookup_table(torch.tensor(inputs, dtype=torch.long))
+        return self.lookup_table(torch.Tensor.tensor(inputs, dtype=torch.Tensor.long))
 
 class bn(nn.Module):
 
     """
 
-    inputs = 3D
+    if inputs = 3D
     batch norm should be done except last dim (E/2) (input:(N,Tx,E/2)) 
 
     batch normalization on the (N,Tx)
@@ -58,19 +57,21 @@ class bn(nn.Module):
 
     """
 
-    def __init__(self, shape, activation_fn=None):
+    def __init__(self, channel, activation_fn=None):
         super(bn,self).__init__() 
         self.activation_fn = activation_fn
         if self.activation_fn == "ReLU":
             self.relu = torch.nn.ReLU()
-        self.batch_norm = nn.BatchNorm1d(shape[2])
+        self.batch_norm = nn.BatchNorm1d(channel) # networks.py의 ref encoder의 경우
 
     def forward(self, inputs):
+        if inputs.dim()==3:
+            input_t=torch.Tensor.transpose(inputs,1,2) 
 
-        input_t=torch.transpose(inputs,1,2) 
-
-        #restore shape
-        rst = torch.transpose(self.batch_norm(input_t),2,1)
+            #restore shape
+            rst = torch.Tensor.transpose(self.batch_norm(input_t),2,1)
+        elif inputs.dim()==4:
+            input_t=torch.Tensor.transpose(inputs,1,2) 
 
         if self.activation_fn == "ReLU":
             return self.relu(rst)
@@ -104,15 +105,15 @@ class conv1d(nn.Module):
             pad_size=0
 
         # shape[2] = E/2
-        conv = torch.nn.Conv1d(shape[2], filters, kernel_size=size, stride=rate, padding=pad_size, bias=use_bias)
+        self.conv = torch.nn.Conv1d(shape[2], filters, kernel_size=size, stride=rate, padding=pad_size, bias=use_bias)
 
     def forward(self, inputs):
 
         #padding=causal은 아직 안 쓰이는 것 같아서 일단 안만듦
 
         #channel size should be E/2, which is at shape[2]. So reshape it to locate at shape[1]
-        input_t = torch.transpose(inputs,1,2)
-        rst = torch.transpose(conv(input_t),2,1)
+        input_t = torch.Tensor.transpose(inputs,1,2)
+        rst = torch.Tensor.transpose(self.conv(input_t),2,1)
         if self.activation_fn == "ReLU":
             return self.relu(rst)
         else:
@@ -132,17 +133,17 @@ class conv1d_banks(nn.Module):
 
     def __init__(self,K):
         super(conv1d_banks,self).__init__()
-        self.conv_list=nn.ModuleList()
+        self.conv_list = nn.ModuleList()
         self.K = K
         for i in range(K): # 0~K-1 => size=i+1
             self.conv_list.append(conv1d(hp.embed_size//2,hp.embed_size//2,size=i+1,activation_fn="ReLU"))
         self.bn = bn(hp.embed_size//2, activation_fn = "RELU")
             
     def forward(self,inputs):
-        rst = conv_list[0](inputs)
-        for i in range(1,K): # 1~K-1 -> size 2~K
-            output = conv_list[i](inputs) # (N,Tx,E/2) 꼴로 나옴
-            torch.cat((rst,output),2)
+        rst = self.conv_list[0](inputs)
+        for i in range(1,self.K): # 1~K-1 -> size 2~K
+            output = self.conv_list[i](inputs) # (N,Tx,E/2) 꼴로 나옴
+            torch.Tensor.cat((rst,output),2)
         rst = bn(rst)
         return rst
 
@@ -166,18 +167,18 @@ class gru(nn.Module):
     """
 
 
-    def __init__(self, shape, num_units=None, bidirection=False):
+    def __init__(self, channel, time, num_units=None, bidirection=False):
         super(gru,self).__init__()
         if num_units == None:
-            num_units = shape[2]
+            num_units = channel
         if bidirection == True:
-            self.gru = torch.nn.GRU(input_size=shape[2] ,num_layers=shape[1], hidden_size=num_units, bidirection=True)
+            self.gru = torch.nn.GRU(input_size=channel ,num_layers = time, hidden_size=num_units, bidirection=True)
         else:
-            self.gru = torch.nn.GRU(input_size=shape[2], num_layers=shape[1], hidden_size=num_units, bidirection=False)
+            self.gru = torch.nn.GRU(input_size=channel, num_layers = time, hidden_size=num_units, bidirection=False)
 
     
     def forward(self,inputs):
-        input_t = torch.transpose(inputs,0,1)
+        input_t = torch.Tensor.transpose(inputs,0,1)
         output,hn = self.gru(input_t)   #hn : hidden states for each t
         return output
     
@@ -185,11 +186,8 @@ class attention_decoder(nn.Module):
     """
     inputs : (N, Ty/r, E/2)
 
-    used BahdanauAttention implementation from https://github.com/spro/practical-pytorch/blob/master/seq2seq-translation/seq2seq-translation.ipynb
-    hidden size : num_units (cells)
-    output size : num_units
-    word input : inputs
-    last_hidden : memory
+    used BahdanauAttention implementation from https://github.com/AuCson/PyTorch-Batch-Attention-Seq2seq
+    
 
     """
     def __init__(self, shape, memory, num_units=None):
@@ -197,12 +195,34 @@ class attention_decoder(nn.Module):
         if num_units == None:
             num_units = shape[2]
         self.memory=memory
-        self.attentionRNN = BahdanauAttnDecoderRNN(hidden_size=num_units, embed_size=)
+        #self.attentionRNN = BahdanauAttnDecoderRNN(hidden_size=num_units, embed_size=)
 
 
     def forward(self,inputs):
         
         return
+
+class prenet_each(nn.Module):
+    """
+    inputs : (N, Ty/r, E/2)
+
+    """
+    def __init__(self, shape, num_units=None):
+        super(prenet_each,self).__init__()
+        if num_units == None:
+            num_units=[hp.embed_size,hp.embed_size//2]
+        self.dense1 = torch.nn.Linear(shape[2],num_units[0])
+        self.dropout1 = torch.nn.Dropout(p=hp.dropout_rate)
+        self.dense2 = torch.nn.Linear(num_units[0],num_units[1])
+        self.dropout2 = torch.nn.Dropout(p=hp.dropout_rate)
+
+    def forward(self,inputs):
+        rst = self.dense1(inputs)
+        rst = self.dropout1(rst)
+        rst = self.dense2(rst)
+        rst = self.dropout2(rst)
+        return rst
+
 
 
 class prenet(nn.Module):

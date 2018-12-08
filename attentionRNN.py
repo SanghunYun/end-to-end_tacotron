@@ -1,39 +1,77 @@
-class BahdanauAttnDecoderRNN(nn.Module):
-    def __init__(self, hidden_size, output_size, n_layers=1, dropout_p=0.1):
-        super(AttnDecoderRNN, self).__init__()
-        
-        # Define parameters
-        self.hidden_size = hidden_size
-        self.output_size = output_size
-        self.n_layers = n_layers
-        self.dropout_p = dropout_p
-        self.max_length = max_length
-        
-        # Define layers
-        self.embedding = nn.Embedding(output_size, hidden_size)
-        self.dropout = nn.Dropout(dropout_p)
-        self.attn = GeneralAttn(hidden_size)
-        self.gru = nn.GRU(hidden_size * 2, hidden_size, n_layers, dropout=dropout_p)
-        self.out = nn.Linear(hidden_size, output_size)
-    
-    def forward(self, word_input, last_hidden, encoder_outputs):
-        # Note that we will only be running forward for a single decoder time step, but will use all encoder outputs
-        
-        # Get the embedding of the current input word (last output word)
-        word_embedded = self.embedding(word_input).view(1, 1, -1) # S=1 x B x N
-        word_embedded = self.dropout(word_embedded)
-        
-        # Calculate attention weights and apply to encoder outputs
-        attn_weights = self.attn(last_hidden[-1], encoder_outputs)
-        context = attn_weights.bmm(encoder_outputs.transpose(0, 1)) # B x 1 x N
-        
-        # Combine embedded input word and attended context, run through RNN
-        rnn_input = torch.cat((word_embedded, context), 2)
-        output, hidden = self.gru(rnn_input, last_hidden)
-        
-        # Final output layer
-        output = output.squeeze(0) # B x N
-        output = F.log_softmax(self.out(torch.cat((output, context), 1)))
-        
-        # Return final output, hidden state, and attention weights (for visualization)
-        return output, hidden, attn_weights
+import torch
+from torch.autograd import Variable
+import torch.nn as nn
+import torch.nn.functional as F
+from collections import OrderedDict
+import numpy as np
+import hyperparams as hp
+
+class AttentionDecoder(nn.Module):
+    """
+    Decoder with attention mechanism (Vinyals et al.)
+    """
+    def __init__(self, num_units):
+        """
+        :param num_units: dimension of hidden units
+        """
+        super(AttentionDecoder, self).__init__()
+        self.num_units = num_units
+
+        self.v = nn.Linear(num_units, 1, bias=False)
+        self.W1 = nn.Linear(num_units, num_units, bias=False)
+        self.W2 = nn.Linear(num_units, num_units, bias=False)
+
+        self.attn_grucell = nn.GRUCell(num_units // 2, num_units)
+        self.gru1 = nn.GRUCell(num_units, num_units)
+        self.gru2 = nn.GRUCell(num_units, num_units)
+
+        self.attn_projection = nn.Linear(num_units * 2, num_units)
+        self.out = nn.Linear(num_units, hp.num_mels * hp.outputs_per_step)
+
+    def forward(self, decoder_input, memory, attn_hidden, gru1_hidden, gru2_hidden):
+
+        memory_len = memory.size()[1]
+        batch_size = memory.size()[0]
+
+        # Get keys
+        keys = self.W1(memory.contiguous().view(-1, self.num_units))
+        keys = keys.view(-1, memory_len, self.num_units)
+
+        # Get hidden state (query) passed through GRUcell
+        d_t = self.attn_grucell(decoder_input, attn_hidden)
+
+        # Duplicate query with same dimension of keys for matrix operation (Speed up)
+        d_t_duplicate = self.W2(d_t).unsqueeze(1).expand_as(memory)
+
+        # Calculate attention score and get attention weights
+        attn_weights = self.v(F.tanh(keys + d_t_duplicate).view(-1, self.num_units)).view(-1, memory_len, 1)
+        attn_weights = attn_weights.squeeze(2)
+        attn_weights = F.softmax(attn_weights)
+
+        # Concatenate with original query
+        d_t_prime = torch.bmm(attn_weights.view([batch_size,1,-1]), memory).squeeze(1)
+
+        # Residual GRU
+        gru1_input = self.attn_projection(torch.cat([d_t, d_t_prime], 1))
+        gru1_hidden = self.gru1(gru1_input, gru1_hidden)
+        gru2_input = gru1_input + gru1_hidden
+
+        gru2_hidden = self.gru2(gru2_input, gru2_hidden)
+        bf_out = gru2_input + gru2_hidden
+
+        # Output
+        output = self.out(bf_out).view(-1, hp.num_mels, hp.outputs_per_step)
+
+        return output, d_t, gru1_hidden, gru2_hidden
+
+    def inithidden(self, batch_size):
+        if use_cuda:
+            attn_hidden = Variable(torch.zeros(batch_size, self.num_units), requires_grad=False).cuda()
+            gru1_hidden = Variable(torch.zeros(batch_size, self.num_units), requires_grad=False).cuda()
+            gru2_hidden = Variable(torch.zeros(batch_size, self.num_units), requires_grad=False).cuda()
+        else:
+            attn_hidden = Variable(torch.zeros(batch_size, self.num_units), requires_grad=False)
+            gru1_hidden = Variable(torch.zeros(batch_size, self.num_units), requires_grad=False)
+            gru2_hidden = Variable(torch.zeros(batch_size, self.num_units), requires_grad=False)
+
+        return attn_hidden, gru1_hidden, gru2_hidden
