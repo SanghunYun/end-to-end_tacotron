@@ -192,13 +192,13 @@ class decoder1(nn.Module):
         if self.is_training==False:
             # Grouping multiple frames if necessary
             if inputs.size(-1) == hp.n_mels:
-                inputs = inputs.view(N, inputs.size(1) // hp.r, -1)
-            assert inputs.size(-1) == hp.n_mels * hp.r
+                inputs = inputs.view(N, inputs.size(1) // self.r, -1)
+            assert inputs.size(-1) == hp.n_mels * self.r
             T_decoder = inputs.size(1)
 
         # go frames
         initial_input = Variable(
-            memory.data.new(N, hp.n_mels * hp.r).zero_())
+            memory.data.new(N, hp.n_mels).zero_())
 
          # Init decoder states
         attention_rnn_hidden = Variable(
@@ -221,7 +221,7 @@ class decoder1(nn.Module):
 
         while True:
             if t > 0:
-                current_input = outputs[-1] if greedy else inputs[t - 1]
+                current_input = outputs[-1,:,-hp.n_mels] if greedy else inputs[t - 1,:,-hp.n_mels]
             # Prenet
             current_input = self.prenet(current_input)
 
@@ -253,7 +253,7 @@ class decoder1(nn.Module):
                 break
         assert greedy or len(outputs) == T_decoder
 
-        alignments = torch.Tensor.stack(alignments).transpose(0, 1)
+        alignments = torch.Tensor.stack(alignments).transpose(0, 1) #(Stack(Ty/r),N,E)->(N,Ty/r,E)
         outputs = torch.Tensor.stack(outputs).transpose(0, 1).contiguous()
 
         return outputs, alignments
