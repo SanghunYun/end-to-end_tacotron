@@ -7,7 +7,7 @@ from attentionRNN import *
 # import modules import *
 
 class transcript_encoder(nn.Module):
-    def __init__(self, is_training=True):
+    def __init__(self):
         super(transcript_encoder, self).__init__()
         self.prenet = prenet(hp.embed_size) #nn.Module에서 알아서 prop... is_training 필요 없을 듯
 
@@ -22,7 +22,7 @@ class transcript_encoder(nn.Module):
         #self.relu_1 = nn.ReLU()
         #self.relu_2 = nn.ReLU()
         
-        self.bn_2 = bn(hp.embed_size//2 activation_fn="ReLU")
+        self.bn_2 = bn(hp.embed_size//2, activation_fn="ReLU")
         self.highwaynet = highwaynet(self.shape, num_units=hp.embed_size//2)
         self.gru = gru(channel = self.shape[2], num_units=hp.embed_size//2, bidirection=True) #output : (N,Tx,E) - bidirectional 때문               # pytorch 
         
@@ -158,9 +158,8 @@ class decoder1(nn.Module):
         Referenced https://github.com/r9y9/tacotron_pytorch
     """
     
-    def __init__(self, is_training): #여기서 shape는 Go의 shape여야 함
+    def __init__(self): #여기서 shape는 Go의 shape여야 함
         super(decoder1, self).__init__()
-        self.is_training = is_training
         self.prenet = prenet(hp.n_mels)
         self.attention_rnn = AttentionWrapper(
             nn.GRUCell(256 + 128, 256),
@@ -181,9 +180,9 @@ class decoder1(nn.Module):
             mask = None
         
         # Run greedy decoding if inputs is None (at Training time)
-        greedy = (self.is_training == True)
+        greedy = inputs is None
 
-        if self.is_training==False:
+        if inputs is not None:
             # Grouping multiple frames if necessary
             if inputs.size(-1) == hp.n_mels:
                 inputs = inputs.view(N, inputs.size(1) // hp.r, -1)
@@ -204,7 +203,7 @@ class decoder1(nn.Module):
             memory.data.new(N, 256).zero_())
 
         # Time first (T_decoder, B, in_dim)
-        if self.is_training==False:
+        if inputs is not None:
             inputs = inputs.transpose(0, 1)
 
         outputs = []
@@ -346,9 +345,13 @@ class Tacotron(nn.Module):
         texts = self.transcript_encoder(txtembedding)  # (N, Tx, E)  --> (N, Tx, E)
         prosody = self.reference_encoder(mel_input)    # (N, Ty, n_mels, 1)  -->  (N, 128)
         prosody = prosody.repeat(1, hp.Tx).view(hp.batch_size, hp.Tx, -1) # (N, 128)  -->  (N, Tx, 128)
-        memory = torch.cat((texts, prosody), -1)       # (N, Tx, E) + (N, Tx, 128) = (N, Tx, E+128)
+        memory = torch.Tensor.cat((texts, prosody), -1)       # (N, Tx, E) + (N, Tx, 128) = (N, Tx, E+128)
         
         out1, align1 = self.decoder1(mel_input, memory)
+<<<<<<< HEAD
         out2 = self.decoder2(out1)
 
         return out1, out2
+=======
+        out2 = self.decoder2(out1)
+>>>>>>> 2ea7b8da10faae3eaf30ad01a98987995e412234

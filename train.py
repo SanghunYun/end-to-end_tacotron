@@ -6,11 +6,10 @@ import os
 import time
 import torch
 import torch.nn as nn
-
 from modules import *
 from utils import * 
 from networks import *
-# use_cuda = torch.cuda.is_availabe()
+use_cuda = torch.cuda.is_available()
 
 def main():
 
