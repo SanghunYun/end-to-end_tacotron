@@ -51,15 +51,17 @@ class AttentionWrapper(nn.Module):
         self.score_mask_value = score_mask_value
 
     def forward(self, query, attention, cell_state, memory,
-                processed_memory=None, mask=None, memory_lengths=None):
+                processed_memory=None, mask=None, memory_lengths=None, t=None):
         if processed_memory is None:
             processed_memory = memory
         if memory_lengths is not None and mask is None:
             mask = get_mask_from_lengths(memory, memory_lengths)
 
         # Concat input query and previous attention context
-        cell_input = torch.Tensor.cat((query, attention), -1)
-
+        if t != 0:
+            cell_input = torch.cat((query, attention), -1)
+        else:
+            cell_input = attention
         # Feed it to RNN
         cell_output = self.rnn_cell(cell_input, cell_state)
 

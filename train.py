@@ -11,11 +11,31 @@ from utils import *
 from networks import *
 use_cuda = torch.cuda.is_available()
 
+
+def save_checkpoint(state, filename='checkpoint.pth.tar'):
+    torch.save(state, filename)
+
+def adjust_learning_rate(optimizer, step):
+    """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
+    if step == 500000:
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = 0.0005
+
+    elif step == 1000000:
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = 0.0003
+
+    elif step == 2000000:
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = 0.0001
+
+    return optimizer
+
 def main():
 
     # Get Dataset
-    data_path = 'C:/2018-2/LJSpeech-1.1'
-    dataset = get_Dataset(os.path.join(data_path,'metadata.csv'), os.path.join(data_path,'wavs'))
+    
+    dataset = get_Dataset(os.path.join(hp.data,'metadata.csv'), os.path.join(hp.data,'wavs'))
 
     # TODO: Tacotron 최종 모델 완성시키기
     if use_cuda:
@@ -23,7 +43,7 @@ def main():
     else:
         model = Tacotron()
 
-
+    optimizer = optim.Adam(model.parameters(), lr=hp.lr)
     # TODO: checkpoint (parameter) 불러와서 사용
     """
     # Load checkpoint if exists
@@ -36,15 +56,17 @@ def main():
     except:
         print("\n--------Start New Training--------\n")
     """    
+    print("\n--------Start New Training--------\n")
     
     
     # Train
     model = model.train()
 
+    """
     # Make checkpoint directory if not exists
     if not os.path.exists(hp.checkpoint_path):
         os.mkdir(hp.checkpoint_path)
-
+    """
 
 
     # Decide loss function
@@ -72,17 +94,16 @@ def main():
     
         for i, data in enumerate(dataloader):
             fname, text, mel, mag = data
-
+            print('epoch :', epoch, 'batch :',i)
             """
                     elif mode=='eval'
                     else # synthesize
             """
-
-            mel_input = np.concatenate((np.zeros([hp.batch_size, hp.n_mels, 1], dtype=np.float32), mel[:,:,1:]), axis=2)
- 
-            
+            #mel_input = np.concatenate((np.zeros([hp.batch_size, hp.n_mels, 1], dtype=np.float32), mel[:,:,1:]), axis=2)
+            mel_input = mel.reshape(hp.batch_size, -1, hp.n_mels)
             # input : text_input, mel_input
             # for loss mel, linear
+            optimizer.zero_grad()
             if use_cuda:
                 text_input = Variable(torch.from_numpy(text).type(torch.cuda.LongTensor), requires_grad=False).cuda()
                 mel_input = Variable(torch.from_numpy(mel_input).type(torch.cuda.FloatTensor), requires_grad=False).cuda()
@@ -123,32 +144,24 @@ def main():
                 print('mel loss : %.4f' % mel_loss.data[0])
                 print('total loss : %.4f' % loss.data[0])
 
+            """
             if current_step % hp.save_step == 0:
                 save_checkpoint({'model' : model.state_dict(),
                                 'optimizer' : optimizer.state_dict()},
                                 os.path.join(hp.checkpoint_path, 'checkpoint_%d.pth.tar' % current_step))
                 print('save model at step %d ...' % current_step)
+            """
 
             if current_step in hp.decay_step:
                 optimizer = adjust_learning_rate(optimizer, current_step)
 
+    # Make trained_model directory if not exists
+    if not os.path.exists(hp.trained_model_path):
+        os.mkdir(hp.trained_model_path)
+
+    path = os.path.join(hp.trained_model_path, './model.pth')
+    torch.save(model.state_dict, path)
 
 
-def save_checkpoint(state, filename='checkpoint.pth.tar'):
-    torch.save(state, filename)
 
-def adjust_learning_rate(optimizer, step):
-    """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
-    if step == 500000:
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = 0.0005
-
-    elif step == 1000000:
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = 0.0003
-
-    elif step == 2000000:
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = 0.0001
-
-    return optimizer
+main()

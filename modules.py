@@ -11,11 +11,14 @@ from hyperparams import Hyperparams as hp
 from torch import *
 from torch.autograd import Variable
 from torch import nn
-from attentionRNN import BahdanauAttnDecoderRNN
+import attentionRNN
+import torch
+import numpy as np
 
 vocab = u'''␀␃ !',-.:;?ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'''
 vocab_size=len(vocab)
 har_to_ix = {char: i for i, char in enumerate(vocab)}
+use_cuda = torch.cuda.is_available()
 
 class embed(nn.Module):
 
@@ -40,7 +43,10 @@ class embed(nn.Module):
         
         ##if zero_pad==True, add zeros to first row
         ## - 일단 없어서 구현 안함
-        return self.lookup_table(torch.Tensor.tensor(inputs, dtype=torch.Tensor.long))
+        if use_cuda:
+            return self.lookup_table(torch.tensor(inputs, dtype=torch.long).cuda())
+        else:
+            return self.lookup_table(torch.tensor(inputs, dtype=torch.long))
 
 class bn(nn.Module):
 
@@ -63,16 +69,16 @@ class bn(nn.Module):
         if self.activation_fn == "ReLU":
             self.relu = torch.nn.ReLU()
         self.batch_norm = nn.BatchNorm1d(channel) # networks.py의 ref encoder의 경우
-
+        self.batch_norm2d = nn.BatchNorm2d(channel)
     def forward(self, inputs):
         if inputs.dim()==3:
-            input_t=torch.Tensor.transpose(inputs,1,2) 
+            input_t=torch.transpose(inputs,1,2) 
 
             #restore shape
-            rst = torch.Tensor.transpose(self.batch_norm(input_t),2,1)
+            rst = torch.transpose(self.batch_norm(input_t),2,1)
         elif inputs.dim()==4:
-            input_t=torch.Tensor.transpose(inputs,1,2) 
-
+            rst = self.batch_norm2d(inputs)
+            
         if self.activation_fn == "ReLU":
             return self.relu(rst)
         else:
@@ -99,8 +105,9 @@ class conv1d(nn.Module):
         if filters == None:
             filters = channel
 
+
         if padding == "SAME":
-            pad_size = max(int((size-1)/2),int(size/2))
+            pad_size = int((size-1) / 2)
         else:
             pad_size=0
 
@@ -111,13 +118,13 @@ class conv1d(nn.Module):
         #padding=causal은 아직 안 쓰이는 것 같아서 일단 안만듦
 
         #channel size should be E/2, which is at shape[2]. So reshape it to locate at shape[1]
-        input_t = torch.Tensor.transpose(inputs,1,2)
-        rst = torch.Tensor.transpose(self.conv(input_t),2,1)
+        rst = torch.transpose(self.conv(torch.transpose(inputs, 1, 2)),2,1)
+
         if self.activation_fn == "ReLU":
             return self.relu(rst)
         else:
             return rst
-
+        
 # 여기부터는 좀 확인 필요
 class conv1d_banks(nn.Module):
     
@@ -130,20 +137,40 @@ class conv1d_banks(nn.Module):
     rst : concat the conv1 results from size 1 to K
     """
 
-    def __init__(self,K):
+    def __init__(self,K, position):
         super(conv1d_banks,self).__init__()
         self.conv_list = nn.ModuleList()
         self.K = K
-        for i in range(K): # 0~K-1 => size=i+1
-            self.conv_list.append(conv1d(hp.embed_size//2,hp.embed_size//2,size=i+1,activation_fn="ReLU"))
-        self.bn = bn(hp.embed_size//2, activation_fn = "RELU")
-            
+        self.position = position
+        if self.position == 'tr_encoder':
+            for i in range(K): # 0~K-1 => size=i+1
+                self.conv_list.append(conv1d(hp.embed_size // 2,hp.embed_size // 2,size=i+1,padding="SAME"))
+        elif self.position == 'decoder2':
+
+            #self.conv_list.append(conv1d(hp.n_mels, hp.embed_size//2, size=1, padding='SAME'))
+            for i in range(0, K):
+                self.conv_list.append(conv1d(hp.n_mels, hp.embed_size // 2, size=i+1, padding='SAME'))
+        
+        self.bn = bn((hp.embed_size//2)*K, activation_fn="ReLU")
+        
+    
+        
     def forward(self,inputs):
         rst = self.conv_list[0](inputs)
         for i in range(1,self.K): # 1~K-1 -> size 2~K
             output = self.conv_list[i](inputs) # (N,Tx,E/2) 꼴로 나옴
-            torch.Tensor.cat((rst,output),2)
-        rst = bn(rst)
+            
+            if self.position == 'tr_encoder':
+                pad_size = (hp.batch_size, 1, 128)
+            elif self.position == 'decoder2':
+                pad_size = (hp.batch_size, 1, hp.embed_size//2)
+            if i % 2 == 1 :
+                zero_pad = np.zeros(pad_size, dtype=np.float32)
+                zero_pad = torch.from_numpy(zero_pad).type(torch.cuda.FloatTensor)
+                output = torch.cat((output, zero_pad), 1)
+            rst = torch.cat((rst,output),2)
+        
+        rst = self.bn(rst)
         return rst
 
 class gru(nn.Module):
@@ -151,7 +178,7 @@ class gru(nn.Module):
     applies gru
 
     inputs : (N,Time(T), Channel(E/2...))
-
+/
     torch.nn.gru input : (T,N,E/2)
 
     num_units = # of hidden units passed (width of gru)
@@ -172,15 +199,16 @@ class gru(nn.Module):
         if num_units == None:
             num_units = channel
         if bidirection == True:
-            self.gru = torch.nn.GRU(input_size=channel, hidden_size=num_units, bidirection=True)
+            self.gru = torch.nn.GRU(input_size=channel, hidden_size=num_units, bidirectional=True)
         else:
-            self.gru = torch.nn.GRU(input_size=channel, hidden_size=num_units, bidirection=False)
+            self.gru = torch.nn.GRU(input_size=channel, hidden_size=num_units, bidirectional=False)
 
     
     def forward(self,inputs):
-        input_t = torch.Tensor.transpose(inputs,0,1)
+        input_t = torch.transpose(inputs,0,1)
+            #tensor_cat = torch.cat((tensor_cat, tensor[:, i, :, :]), 2)
         output,hn = self.gru(input_t)   #hn : hidden states for each t
-        return output
+        return torch.transpose(output,1,0)
 
 class prenet(nn.Module):
     """
@@ -219,11 +247,16 @@ class highwaynet(nn.Module):
         self.relu = torch.nn.ReLU()
         self.sigmoid = torch.nn.Sigmoid()
 
-
     def forward(self,inputs):
+
         h_relu = self.relu(self.H(inputs))
         t_sigmoid = self.sigmoid(self.T(inputs))
-        output = h_relu * t_sigmoid + inputs * (1.-t_sigmoid)
+        a = h_relu *t_sigmoid
+        b = 1.-t_sigmoid
+        c = inputs * b
+        output = a + c
+        #output = h_relu * t_sigmoid + inputs * (1.-t_sigmoid)
+
         return output
     
 

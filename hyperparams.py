@@ -12,10 +12,10 @@ class Hyperparams:
     vocab = u'''␀␃ !',-.:;?ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz''' # ␀: Padding ␃: End of Sentence
 
     # data
-    data = "data/private/voice/LJSpeech-1.1"
+    data = "/home/widen-desktop2/Desktop/tacotron/LJSpeech-1.1"
     test_data = 'test_sents.txt'
     ref_audio = 'ref1/*.wav'
-    Tx = 188 # Fixed length of text length.
+    Tx = 332 # Fixed length of text length.
 
     # signal processing
     sr = 22050 # Sample rate.
@@ -43,13 +43,16 @@ class Hyperparams:
     lr = 0.001 # Initial learning rate.
     logdir = "logdir"
     sampledir = 'samples'
-    batch_size = 32
-    num_iterations = 1000000
+    batch_size = 16
+    #num_iterations = 1000000 // (13100 // batch_size)
+    num_iterations = 1250
 
 
+  #    data = "/home/widen-desktop2/Desktop/tacotron/LJSpeech-1.1"
 
-  #
-    checkpoint_path = 'C:/2018-2/LJSpeech-1.1/checkpoint/'
+    checkpoint_path = '/home/widen-desktop2/end-to-end_tacotron/checkpoint/'
+    trained_model_path = './trained_model'
+
     # TODO: 수정 필요
     num_freq = 1024
     epochs = num_iterations
