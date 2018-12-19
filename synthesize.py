@@ -8,11 +8,8 @@ https://www.github.com/kyubyong/tacotron
 from __future__ import print_function
 
 from hyperparams import Hyperparams as hp
-import tqdm
-from data_load import load_data
-import tensorflow as tf
-from train import Graph
 from utils import spectrogram2wav, load_spectrograms
+from data_load import load_data
 from scipy.io.wavfile import write
 import os
 import sys
@@ -20,6 +17,12 @@ from glob import glob
 import numpy as np
 from math import ceil
 
+
+from data_load import get_Dataset, DataLoader, collate_fn, load_vocab
+import torch
+import torch.nn as nn
+from networks import *
+use_cuda = torch.cuda.is_available()
 
 def looper(ref, start, batch_size):
     num = int(ceil(float(ref.shape[0]) / batch_size)) + 1
@@ -34,6 +37,7 @@ def synthesize():
     # Load data
     texts = load_data(mode="synthesize")
 
+    """
     # pad texts to multiple of batch_size
     texts_len = texts.shape[0]
     num_batches = int(ceil(float(texts_len) / hp.batch_size))
@@ -41,6 +45,7 @@ def synthesize():
     texts = np.pad(
         texts, ((0, padding_len), (0, 0)), 'constant', constant_values=0
     )
+    """
 
     # reference audio
     mels, maxlen = [], 0
@@ -55,53 +60,60 @@ def synthesize():
     for i, m in enumerate(mels):
         ref[i, :m.shape[0], :] = m
 
-    # Load graph
-    g = Graph(mode="synthesize")
-    print("Graph loaded")
 
-    saver = tf.train.Saver()
-    with tf.Session() as sess:
-        if len(sys.argv) == 1:
-            saver.restore(sess, tf.train.latest_checkpoint(hp.logdir))
-            print("Restored latest checkpoint")
-        else:
-            saver.restore(sess, sys.argv[1])
-            print("Restored checkpoint: %s" % sys.argv[1])
+    use_cuda = torch.cuda.is_available()  
 
-        batches = [
-            texts[i:i + hp.batch_size]
-            for i in range(0, texts.shape[0], hp.batch_size)
-        ]
-        start = 0
-        batch_index = 0
-        # Feed Forward
-        for batch in batches:
-            ref_batch, start = looper(ref, start, hp.batch_size)
-            ## mel
-            y_hat = np.zeros(
-                (batch.shape[0], 200, hp.n_mels * hp.r), np.float32
-            )  # hp.n_mels*hp.r
-            for j in tqdm.tqdm(range(200)):
-                _y_hat = sess.run(
-                    g.y_hat, {g.x: batch,
-                              g.y: y_hat,
-                              g.ref: ref_batch}
-                )
-                y_hat[:, j, :] = _y_hat[:, j, :]
-            ## mag
-            mags = sess.run(g.z_hat, {g.y_hat: y_hat})
-            for i, mag in enumerate(mags):
-                index_label = batch_index * hp.batch_size + i + 1
-                if index_label > texts_len:
-                    break
-                print("File {}.wav is being generated ...".format(index_label))
-                audio = spectrogram2wav(mag)
-                write(
-                    os.path.join(hp.sampledir, '{}.wav'.format(index_label)),
-                    hp.sr, audio
-                )
+    if use_cuda:
+        model = nn.DataParallel(Tacotron().cuda())
+    else:
+        model = Tacotron()
 
-            batch_index += 1
+    # Load checkpoint
+    model_path = hp.checkpoint_path + '/' + 'model_epoch_7.pth'
+    try:
+        checkpoint = torch.load(model_path)
+        model.load_state_dict(checkpoint)
+        print("\n-------Model load --------\n")
+
+    except:
+        raise FileNotFoundError("\n------------Model not exists------------\n")
+
+    # Evaluation
+    model = model.eval()
+
+    wav = generate(model, texts, ref)
+
+    """
+    path = os.path.join(hp.output_path, 'result_%d_%d.wav' % (args.restore_step, i+1))
+    with open(path, 'wb') as f:
+        f.write(wav)
+
+    f.close()
+    print("save wav file at step %d ..." % (i+1))
+    """
+def generate(model,texts,ref):
+
+    #Variables
+    if use_cuda:
+        text_input = Variable(torch.from_numpy(texts).type(torch.cuda.LongTensor), volatile=True).cuda()
+        mel_input = Variable(torch.from_numpy(ref).type(torch.cuda.FloatTensor), volatile=True).cuda()
+
+    else:
+        text_input = Variable(torch.from_numpy(texts).type(torch.LongTensor), volatile=True)
+        mel_input = Variable(torch.from_numpy(ref).type(torch.FloatTensor), volatile=True)
+
+    _, linear_outputs = model.forward(text_input, mel_input)
+
+    linear_outputs = linear_outputs.data.cpu().numpy()
+    for i, output in enumerate(linear_outputs):
+            
+        print("File {}.wav is being generated ...".format(i))
+        audio = spectrogram2wav(output)
+        write(
+            os.path.join(hp.sampledir, '{}.wav'.format(i)),
+            hp.sr, audio
+        )
+
 
 
 if __name__ == '__main__':

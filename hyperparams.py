@@ -10,7 +10,6 @@ class Hyperparams:
     prepro = True  # if True, run `python prepro.py` first before running `python train.py`.
 
     vocab = u'''␀␃ !',-.:;?ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz''' # ␀: Padding ␃: End of Sentence
-
     # data
     data = "/home/widen-desktop2/Desktop/tacotron/LJSpeech-1.1"
     test_data = 'test_sents.txt'
@@ -42,16 +41,16 @@ class Hyperparams:
     # training scheme
     lr = 0.001 # Initial learning rate.
     logdir = "logdir"
-    sampledir = 'samples'
+    sampledir = './sample/'
     batch_size = 16
     #num_iterations = 1000000 // (13100 // batch_size)
-    num_iterations = 1250
+    num_iterations = 140
 
 
   #    data = "/home/widen-desktop2/Desktop/tacotron/LJSpeech-1.1"
-
-    checkpoint_path = '/home/widen-desktop2/end-to-end_tacotron/checkpoint/'
+    checkpoint_path = './checkpoint'
     trained_model_path = './trained_model'
+    log_data = './log_data'
 
     # TODO: 수정 필요
     num_freq = 1024

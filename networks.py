@@ -184,10 +184,10 @@ class decoder1(nn.Module):
         
         # Run greedy decoding if inputs is None (at Training time)
         #greedy = inputs is None
-        if self.is_training:
-            greedy=True
-            T_decoder = inputs.size(1)
+        greedy=True
+        T_decoder = inputs.size(1)
 
+        """
         #if inputs is not None:
         if self.is_training == False:
             # Grouping multiple frames if necessary
@@ -195,7 +195,7 @@ class decoder1(nn.Module):
                 inputs = inputs.view(N, inputs.size(1) // hp.r, -1)
             assert inputs.size(-1) == hp.n_mels * hp.r
             T_decoder = inputs.size(1)
-
+        """
         # go frames
         initial_input = Variable(
             memory.data.new(N, hp.n_mels).zero_())

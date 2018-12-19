@@ -44,6 +44,14 @@ class embed(nn.Module):
         ##if zero_pad==True, add zeros to first row
         ## - 일단 없어서 구현 안함
         if use_cuda:
+            for i in range(inputs.shape[0]):
+                print(inputs[i])
+            try:
+                a = self.lookup_table(torch.tensor(inputs, dtype=torch.long).cuda())
+            except ZeroDivisionError as ex:
+                print(ex)
+            print('============================')
+            print(a)
             return self.lookup_table(torch.tensor(inputs, dtype=torch.long).cuda())
         else:
             return self.lookup_table(torch.tensor(inputs, dtype=torch.long))

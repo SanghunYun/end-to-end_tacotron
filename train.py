@@ -1,6 +1,7 @@
 from data_load import get_Dataset, DataLoader, collate_fn, load_vocab
 from torch import optim
 
+import pandas as pd
 import numpy as np
 import os
 import time
@@ -12,7 +13,7 @@ from networks import *
 use_cuda = torch.cuda.is_available()
 
 
-def save_checkpoint(state, filename='checkpoint.pth.tar'):
+def save_checkpoint(state, filename='checkpoint.pth'):
     torch.save(state, filename)
 
 def adjust_learning_rate(optimizer, step):
@@ -44,29 +45,41 @@ def main():
         model = Tacotron()
 
     optimizer = optim.Adam(model.parameters(), lr=hp.lr)
-    # TODO: checkpoint (parameter) 불러와서 사용
-    """
-    # Load checkpoint if exists
-    try:
-        checkpoint = torch.load(os.path.join(hp.checkpoint_path,'checkpoint_%d.pth.tar'% args.restore_step))
-        model.load_state_dict(checkpoint['model'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
-        print("\n--------model restored at step %d--------\n" % args.restore_step)
+    
 
-    except:
-        print("\n--------Start New Training--------\n")
-    """    
+    # Train
+    model = model.train()
+    
+    # Load checkpoint
+    model_path = hp.checkpoint_path + '/' + 'model_epoch_8.pth'
+    
+    checkpoint = torch.load(model_path)
+    model.load_state_dict(checkpoint)
+    print("\n-------Model load --------\n")
+
+
+    """
+    number = 0
+    model_out_path = hp.checkpoint_path + '/' + 'model_epoch_{}.pth'.format(number)
+    model.load_state_dict(torch.load(model_out_path))
+
+    print("\n--------load model model_epoch_{}.pth-------\n".format(number))
+    """
+    
     print("\n--------Start New Training--------\n")
     
     
-    # Train
-    model = model.train()
+    
+   
 
-    """
+    
     # Make checkpoint directory if not exists
     if not os.path.exists(hp.checkpoint_path):
         os.mkdir(hp.checkpoint_path)
-    """
+    
+    if not os.path.exists(hp.log_data):
+        os.mkdir(hp.log_data)
+    
 
 
     # Decide loss function
@@ -78,6 +91,7 @@ def main():
     
     # Loss for frequency of human register
     n_priority_freq = int(3000 / (hp.sr * 0.5) * hp.num_freq)
+
 
 
     for epoch in range(hp.epochs):
@@ -94,7 +108,7 @@ def main():
     
         for i, data in enumerate(dataloader):
             fname, text, mel, mag = data
-            print('epoch :', epoch, 'batch :',i)
+            
             """
                     elif mode=='eval'
                     else # synthesize
@@ -125,7 +139,7 @@ def main():
             linear_loss = 0.5 * torch.mean(linear_loss) + 0.5 * torch.mean(linear_loss[:, :n_priority_freq, :])
             loss = mel_loss + linear_loss
             loss = loss.cuda()
-            # TODO: loss.cuda()??????
+            # TODO: loss.cuda()?????
 
             start_time = time.time()
 
@@ -136,25 +150,29 @@ def main():
 
             current_step = i + epoch * len(dataloader) + 1
             time_per_step = time.time() - start_time
-
-            if current_step % hp.log_step == 0:
-                print('time per step : %.2f sec' % time_per_step)
-                print('at timestpe %d' % current_step)
-                print('linear loss : %.4f' % linear_loss.data[0])
-                print('mel loss : %.4f' % mel_loss.data[0])
-                print('total loss : %.4f' % loss.data[0])
-
-            """
-            if current_step % hp.save_step == 0:
-                save_checkpoint({'model' : model.state_dict(),
-                                'optimizer' : optimizer.state_dict()},
-                                os.path.join(hp.checkpoint_path, 'checkpoint_%d.pth.tar' % current_step))
-                print('save model at step %d ...' % current_step)
-            """
-
+            
+            print('(epoch, batch) (%d, %d) \n(time, current, linear, mel, loss) (%.2f  %d  %.4f  %.4f  %.4f)' % (epoch+1, i+1, time_per_step, current_step, linear_loss, mel_loss, loss))
+            
             if current_step in hp.decay_step:
                 optimizer = adjust_learning_rate(optimizer, current_step)
 
+        print('model_epoch_{} save'.format(epoch+1))
+        """
+        log_path = hp.log_data + '/' + 'model_log_{}.csv'.format(epoch+1)
+        df = pd.DataFrame([[epoch+1, i+1, time_per_step, current_step, linear_loss, mel_loss, loss]])
+        df.to_csv(log_path, header=True, index=False)        
+        """
+        """
+        df = pd.DataFrame([[epoch+1, i+1, time_per_step, current_step, linear_loss, mel_loss, loss]])
+        if epoch != 0:
+            add_df = pd.read_csv(log_path)
+            df = pd.concat([add_df, df])
+        df.to_csv(log_path, header=True, index=False)
+        """
+        """
+        model_out_path = hp.checkpoint_path + '/' + 'model_epoch_{}.pth'.format(epoch+1)
+        torch.save(model.state_dict(), model_out_path)
+        """
     # Make trained_model directory if not exists
     if not os.path.exists(hp.trained_model_path):
         os.mkdir(hp.trained_model_path)

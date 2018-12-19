@@ -50,7 +50,7 @@ def load_data(mode="train"):
     else:
         # Parse
         lines = codecs.open(hp.test_data, 'r', 'utf-8').readlines()[1:]
-        sents = [text_normalize(line.split(" ", 1)[-1]).strip() + u"␃" for line in lines]  # text normalization, E: EOS
+        sents = [text_normalize(line.split(" ", 1)[-1]).strip() + "E" for line in lines]  # text normalization, E: EOS
         texts = np.zeros((len(lines), hp.Tx), np.int32)
         for i, sent in enumerate(sents):
             texts[i, :len(sent)] = [char2idx[char] for char in sent]

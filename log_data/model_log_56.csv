@@ -1,0 +1,2 @@
+0,1,2,3,4,5,6
+56,818,0.7775406837463379,45808,"tensor(nan, device='cuda:0', grad_fn=<ThAddBackward>)","tensor(nan, device='cuda:0', grad_fn=<L1LossBackward>)","tensor(nan, device='cuda:0', grad_fn=<ThAddBackward>)"
